@@ -3,18 +3,18 @@ import numpy as np
 import json
 import io
 import zipfile
-from datetime import datetime
 import os
+from datetime import datetime
 
 import plotly.express as px
 from dash import Dash, dash_table, dcc, html, Input, Output, State, callback_context
 import dash_bootstrap_components as dbc
 
-# Inicializa a aplicação com Bootstrap
+# Inicializa a aplicação com o tema FLATLY do Bootstrap
 app = Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
-server = app.server  # Usado para deploy
+server = app.server  # Usado para deploy (ex.: gunicorn)
 
-# Injetar estilo customizado no head (para a classe .thumb-img)
+# Injetar estilo customizado no head para as imagens
 app.index_string = '''
 <!DOCTYPE html>
 <html>
@@ -50,11 +50,10 @@ app.index_string = '''
 '''
 
 # --- 1. Pré-processamento dos Dados ---
-# Abra o arquivo zip e leia o CSV
+# Lê o CSV compactado do arquivo ZIP
 zip_path = 'imoveis-residencial.zip'
 with zipfile.ZipFile(zip_path, 'r') as z:
-    # Considerando que o zip contém apenas um arquivo CSV
-    csv_filename = z.namelist()[0]
+    csv_filename = z.namelist()[0]  # Supõe que há somente um CSV dentro do ZIP
     df = pd.read_csv(z.open(csv_filename))
 
 df.columns = df.columns.str.lower()
@@ -132,6 +131,7 @@ df['neighbourhood'].fillna("Desconhecido", inplace=True)
 df['uf'].fillna("Desconhecido", inplace=True)
 df['price_value'].fillna(0, inplace=True)
 
+# Remover outliers de preço conforme o projeto antigo
 df = df[(df['price_value'] >= 100) & (df['price_value'] <= 10000)]
 
 def create_thumbnail_html(url):
@@ -145,6 +145,7 @@ else:
     df['thumbnail_link'] = ""
 
 # --- 2. Layout ---
+# Definição das colunas da tabela
 columns_for_table = [
     {"name": "ID", "id": "id"},
     {"name": "listId", "id": "listid"},
@@ -163,38 +164,209 @@ columns_for_table = [
     {"name": "Data", "id": "date"}
 ]
 
-# Aqui, para simplificar, usamos placeholders para filtros e resumos:
+# Criação dos filtros reais
 filtros_container = dbc.Container([
     dbc.Row([
-        dbc.Col(html.Div("Filtros aqui..."), width=12)
-    ])
-], fluid=True)
-
-resumos_container = dbc.Container([
+        dbc.Col([
+            html.Label("Período:"),
+            dcc.DatePickerRange(
+                id='filtro-data',
+                min_date_allowed=df['date'].min() if df['date'].notna().any() else None,
+                max_date_allowed=df['date'].max() if df['date'].notna().any() else None,
+                start_date=df['date'].min() if df['date'].notna().any() else None,
+                end_date=df['date'].max() if df['date'].notna().any() else None,
+                display_format='DD/MM/YYYY'
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Município:"),
+            dcc.Dropdown(
+                id='filtro-municipio',
+                options=[{'label': mun, 'value': mun} for mun in sorted(df['municipality'].unique())],
+                multi=True,
+                placeholder="Selecione um município"
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Bairro:"),
+            dcc.Dropdown(
+                id='filtro-bairro',
+                options=[{'label': b, 'value': b} for b in sorted(df['neighbourhood'].unique())],
+                multi=True,
+                placeholder="Selecione um bairro"
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Categoria:"),
+            dcc.Dropdown(
+                id='filtro-categoria',
+                options=[{'label': cat, 'value': cat} for cat in sorted(df['category'].dropna().unique())],
+                multi=True,
+                placeholder="Selecione uma categoria"
+            )
+        ], width=3)
+    ]),
     dbc.Row([
-        dbc.Col(html.Div("Cards de resumo aqui..."), width=12)
+        dbc.Col([
+            html.Label("Tipo de Imóvel:"),
+            dcc.Dropdown(
+                id='filtro-tipo',
+                options=[{'label': tip, 'value': tip} for tip in sorted(df['real_estate_type'].dropna().unique())],
+                multi=True,
+                placeholder="Selecione um tipo"
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Faixa de Preço (R$):"),
+            dcc.RangeSlider(
+                id='filtro-preco',
+                min=float(df['price_value'].min()),
+                max=float(df['price_value'].max()),
+                step=50,
+                value=[float(df['price_value'].min()), float(df['price_value'].max())],
+                tooltip={"placement": "bottom", "always_visible": True}
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Número de Quartos:"),
+            dcc.RangeSlider(
+                id='filtro-quartos',
+                min=int(df['rooms'].min()),
+                max=int(df['rooms'].max()),
+                step=1,
+                marks={i: str(i) for i in range(int(df['rooms'].min()), int(df['rooms'].max())+1)},
+                value=[int(df['rooms'].min()), int(df['rooms'].max())],
+                tooltip={"placement": "bottom", "always_visible": True}
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Número de Banheiros:"),
+            dcc.RangeSlider(
+                id='filtro-banheiros',
+                min=int(df['bathrooms'].min()),
+                max=int(df['bathrooms'].max()),
+                step=1,
+                marks={i: str(i) for i in range(int(df['bathrooms'].min()), int(df['bathrooms'].max())+1)},
+                value=[int(df['bathrooms'].min()), int(df['bathrooms'].max())],
+                tooltip={"placement": "bottom", "always_visible": True}
+            )
+        ], width=3)
+    ]),
+    dbc.Row([
+        dbc.Col([
+            html.Label("Vagas na Garagem:"),
+            dcc.RangeSlider(
+                id='filtro-vagas',
+                min=int(df['garage_spaces'].min()),
+                max=int(df['garage_spaces'].max()),
+                step=1,
+                marks={i: str(i) for i in range(int(df['garage_spaces'].min()), int(df['garage_spaces'].max())+1)},
+                value=[int(df['garage_spaces'].min()), int(df['garage_spaces'].max())],
+                tooltip={"placement": "bottom", "always_visible": True}
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Anúncio Profissional:"),
+            dcc.Dropdown(
+                id='filtro-profissional',
+                options=[
+                    {'label': 'Sim', 'value': True},
+                    {'label': 'Não', 'value': False}
+                ],
+                placeholder="Selecione..."
+            )
+        ], width=3),
+        dbc.Col([
+            html.Label("Busca (subject ou title):"),
+            dcc.Input(
+                id='busca-input',
+                type='text',
+                placeholder='Digite a busca...',
+                style={'width': '100%'}
+            )
+        ], width=6)
     ])
 ], fluid=True)
 
+# Cards de resumo (diminuindo a altura para não ficarem grandes)
+resumos_container = dbc.Container(
+    dbc.Row([
+        dbc.Col(
+            dbc.Card(
+                dbc.CardBody([
+                    html.H5("Total de Imóveis", className="card-title"),
+                    html.H2(id="total-imoveis", className="card-text")
+                ]),
+                color="primary", inverse=True, style={"height": "130px", "padding": "10px"}
+            ),
+            width=3
+        ),
+        dbc.Col(
+            dbc.Card(
+                dbc.CardBody([
+                    html.H5("Preço Médio (R$)", className="card-title"),
+                    html.H2(id="preco-medio", className="card-text")
+                ]),
+                color="success", inverse=True, style={"height": "130px", "padding": "10px"}
+            ),
+            width=3
+        ),
+        dbc.Col(
+            dbc.Card(
+                dbc.CardBody([
+                    html.H5("Preço Mediano (R$)", className="card-title"),
+                    html.H2(id="preco-mediano", className="card-text")
+                ]),
+                color="info", inverse=True, style={"height": "130px", "padding": "10px"}
+            ),
+            width=3
+        ),
+        dbc.Col(
+            dbc.Card(
+                dbc.CardBody([
+                    html.H5("Quartos Médios", className="card-title"),
+                    html.H2(id="quartos-medios", className="card-text")
+                ]),
+                color="warning", inverse=True, style={"height": "130px", "padding": "10px"}
+            ),
+            width=3
+        )
+    ]),
+    fluid=True,
+    className="mb-4",
+    style={"margin-top": "20px"}
+)
+
+# Modal para imagem ampliada
 imagem_modal = dbc.Modal(
     [
         dbc.ModalHeader(dbc.ModalTitle("Visualizar Imagem")),
         dbc.ModalBody(html.Img(id="imagem-modal", src="", style={"width": "100%"})),
         dbc.ModalFooter(
             dbc.Button("Fechar", id="fechar-modal", className="ms-auto", n_clicks=0)
-        ),
+        )
     ],
     id="modal-imagem",
     is_open=False,
-    size="lg",
+    size="lg"
 )
 
+# Layout principal do dashboard
 app.layout = dbc.Container([
     dbc.Row([
-        dbc.Col(html.H1("Dashboard OLX - Imóveis para Alugar no Amazonas",
-                        className="text-center mb-4",
-                        style={"font-family": "Arial", "font-weight": "bold", "color": "#2c3e50", "font-size": "3rem"}),
-                width=12)
+        dbc.Col(
+            html.H1(
+                "Dashboard OLX - Imóveis para Alugar no Amazonas",
+                className="text-center mb-4",
+                style={
+                    "font-family": "Arial",
+                    "font-weight": "bold",
+                    "color": "#2c3e50",
+                    "font-size": "3rem"
+                }
+            ),
+            width=12
+        )
     ]),
     filtros_container,
     resumos_container,
@@ -206,11 +378,14 @@ app.layout = dbc.Container([
                         id='tabela-dados',
                         columns=columns_for_table,
                         data=df.to_dict('records'),
-                        style_table={'overflowY': 'scroll', 'maxHeight': '500px'},
+                        style_table={'overflowY': 'scroll', 'maxHeight': '500px', 'overflowX': 'auto'},
                         filter_action="native",
                         sort_action="native",
                         style_cell={'textAlign': 'left', 'padding': '5px'},
-                        style_header={'backgroundColor': 'rgb(230, 230, 230)', 'fontWeight': 'bold'},
+                        style_header={
+                            'backgroundColor': 'rgb(230, 230, 230)',
+                            'fontWeight': 'bold'
+                        },
                         markdown_options={'html': True}
                     )
                 ])
@@ -431,7 +606,7 @@ def atualizar_dashboard(start_date, end_date, municipios, bairros, categorias, t
     Output("download-excel", "data"),
     Input("botao-download", "n_clicks"),
     State('tabela-dados', 'data'),
-    prevent_initial_call=True,
+    prevent_initial_call=True
 )
 def baixar_excel(n_clicks, dados_tabela):
     df_download = pd.DataFrame(dados_tabela)
@@ -445,7 +620,7 @@ def baixar_excel(n_clicks, dados_tabela):
     Output("download-csv", "data"),
     Input("botao-download-csv", "n_clicks"),
     State('tabela-dados', 'data'),
-    prevent_initial_call=True,
+    prevent_initial_call=True
 )
 def baixar_csv(n_clicks, dados_tabela):
     df_download = pd.DataFrame(dados_tabela)
@@ -480,4 +655,4 @@ def exibir_imagem(active_cell, table_data, fechar, is_open):
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
-    app.run_server(debug=False, host='0.0.0.0', port=port)
+    app.run_server(debug=True, host='0.0.0.0', port=port)
