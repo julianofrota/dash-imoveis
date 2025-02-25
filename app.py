@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import json
 import io
+import zipfile
 from datetime import datetime
 import os
 
@@ -9,11 +10,11 @@ import plotly.express as px
 from dash import Dash, dash_table, dcc, html, Input, Output, State, callback_context
 import dash_bootstrap_components as dbc
 
-# Inicializa a aplicação com um tema clean do Bootstrap
+# Inicializa a aplicação com Bootstrap
 app = Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
-server = app.server  # Esse objeto 'server' é usado pelo gunicorn no deploy
+server = app.server  # Usado para deploy
 
-# Injetar estilo customizado no head para as imagens
+# Injetar estilo customizado no head (para a classe .thumb-img)
 app.index_string = '''
 <!DOCTYPE html>
 <html>
@@ -49,8 +50,13 @@ app.index_string = '''
 '''
 
 # --- 1. Pré-processamento dos Dados ---
-# Suponha que o arquivo CSV esteja no mesmo diretório e se chame "imoveis-residencial.csv"
-df = pd.read_csv('imoveis-residencial.csv')
+# Abra o arquivo zip e leia o CSV
+zip_path = 'imoveis-residencial.zip'
+with zipfile.ZipFile(zip_path, 'r') as z:
+    # Considerando que o zip contém apenas um arquivo CSV
+    csv_filename = z.namelist()[0]
+    df = pd.read_csv(z.open(csv_filename))
+
 df.columns = df.columns.str.lower()
 df['id'] = range(1, len(df) + 1)
 
@@ -157,12 +163,13 @@ columns_for_table = [
     {"name": "Data", "id": "date"}
 ]
 
-# Aqui você deve colocar os componentes reais dos filtros e dos cards
+# Aqui, para simplificar, usamos placeholders para filtros e resumos:
 filtros_container = dbc.Container([
     dbc.Row([
         dbc.Col(html.Div("Filtros aqui..."), width=12)
     ])
 ], fluid=True)
+
 resumos_container = dbc.Container([
     dbc.Row([
         dbc.Col(html.Div("Cards de resumo aqui..."), width=12)
@@ -472,6 +479,5 @@ def exibir_imagem(active_cell, table_data, fechar, is_open):
     return is_open, ""
 
 if __name__ == '__main__':
-    # Render utiliza a variável de ambiente PORT; se não existir, use 8080
     port = int(os.environ.get("PORT", 8080))
     app.run_server(debug=False, host='0.0.0.0', port=port)
